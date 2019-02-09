@@ -3,6 +3,7 @@ package subprocess
 import (
 	"bytes"
 	"context"
+	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"log"
 	"os"
@@ -26,6 +27,7 @@ type SubProcess struct {
 	ctx     context.Context
 	pty     *os.File
 	log     *logger
+	oldState *terminal.State
 }
 
 func NewSubProcess(command string, args ...string) (*SubProcess, error) {
@@ -88,22 +90,6 @@ func waitForCommandCompletion(ctx context.Context, cmd *exec.Cmd, errs chan erro
 	}
 }
 
-func copyFrom(ctx context.Context, dst io.Writer, src io.Reader, errs chan error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			_, err := io.Copy(dst, src)
-
-			if err != nil {
-				log.Printf("unable to copy pty to stdout: %v", err)
-				errs <- err
-			}
-		}
-	}
-}
-
 func (s *SubProcess) Interact() {
 	errs := make(chan error)
 	stop := make(chan struct{}, 1)
@@ -115,8 +101,8 @@ func (s *SubProcess) Interact() {
 
 	go s.listenForShutdown(signals, errs, stop)
 	go waitForCommandCompletion(ctx, s.command, errs, stop)
-	go copyFrom(ctx, os.Stdout, s.pty, errs)
-	go copyFrom(ctx, s.pty, os.Stdin, errs)
+	go io.Copy(os.Stdout, s.pty)
+	go io.Copy(s.pty, os.Stdin)
 
 	<-stop
 	cancel()
@@ -134,10 +120,18 @@ func (s *SubProcess) Start() error {
 	}
 	s.pty = p
 
+	s.oldState, err = terminal.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (s *SubProcess) Close() error {
+	defer func() {
+		_ = terminal.Restore(int(os.Stdin.Fd()), s.oldState)
+	}()
 	if s.command != nil && s.command.Process != nil {
 		return s.command.Process.Kill()
 	}
