@@ -23,10 +23,10 @@ var ErrTimeout = errors.New("timeout expecting results")
 const DefaultTimeout = 30 * time.Second
 
 type SubProcess struct {
-	command *exec.Cmd
-	ctx     context.Context
-	pty     *os.File
-	log     *logger
+	command  *exec.Cmd
+	ctx      context.Context
+	pty      *os.File
+	log      *logger
 	oldState *terminal.State
 }
 
@@ -72,21 +72,12 @@ func (s *SubProcess) listenForShutdown(signals chan os.Signal, errs chan error, 
 	}
 }
 
-func waitForCommandCompletion(ctx context.Context, cmd *exec.Cmd, errs chan error, stop chan struct{}) {
-	go func() {
-		err := cmd.Wait()
-		if err != nil {
-			errs <- err
-		}
-		stop <- struct{}{}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		}
+func waitForCommandCompletion(cmd *exec.Cmd, errs chan error, stop chan struct{}) {
+	err := cmd.Wait()
+	if err != nil {
+		errs <- err
 	}
+	stop <- struct{}{}
 }
 
 func (s *SubProcess) Interact() {
@@ -96,10 +87,10 @@ func (s *SubProcess) Interact() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGINT, syscall.SIGWINCH, syscall.SIGTSTP)
 
-	ctx, cancel := context.WithCancel(s.ctx)
+	_, cancel := context.WithCancel(s.ctx)
 
 	go s.listenForShutdown(signals, errs, stop)
-	go waitForCommandCompletion(ctx, s.command, errs, stop)
+	go waitForCommandCompletion(s.command, errs, stop)
 	go io.Copy(os.Stdout, s.pty)
 	go io.Copy(s.pty, os.Stdin)
 
@@ -219,7 +210,7 @@ func (s *SubProcess) readOutput(ctx context.Context, wg *sync.WaitGroup, buf io.
 			var temp bytes.Buffer
 
 			n, err := io.Copy(&temp, s.pty)
-			if err != nil && err != io.EOF{
+			if err != nil && err != io.EOF {
 				errs <- err
 				close(errs)
 				return
@@ -233,4 +224,3 @@ func (s *SubProcess) readOutput(ctx context.Context, wg *sync.WaitGroup, buf io.
 		}
 	}
 }
-
