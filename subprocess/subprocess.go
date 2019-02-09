@@ -42,13 +42,11 @@ func NewSubProcess(command string, args ...string) (*SubProcess, error) {
 }
 
 func (s *SubProcess) listenForShutdown(signals chan os.Signal, errs chan error, stop chan struct{}) {
-
 	for {
 		select {
 		case e := <-errs:
 			log.Printf("failed with error: %v", e)
 			stop <- struct{}{}
-			close(stop)
 			return
 
 		case sig := <-signals:
@@ -59,13 +57,8 @@ func (s *SubProcess) listenForShutdown(signals chan os.Signal, errs chan error, 
 					log.Printf("error resizing pty: %s", err)
 				}
 
-			case os.Interrupt:
-				fallthrough
-			case syscall.SIGTSTP:
-				fallthrough
-			case syscall.SIGINT:
+			default:
 				stop <- struct{}{}
-				close(stop)
 				return
 			}
 		}
@@ -96,6 +89,7 @@ func (s *SubProcess) Interact() {
 
 	<-stop
 	cancel()
+	close(stop)
 	_ = s.pty.Close()
 }
 
