@@ -3,7 +3,6 @@ package subprocess
 import (
 	"bytes"
 	"context"
-	"golang.org/x/crypto/ssh/terminal"
 	"io"
 	"log"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/kr/pty"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 var ErrTimeout = errors.New("timeout expecting results")
