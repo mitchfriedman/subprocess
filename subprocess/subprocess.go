@@ -109,13 +109,8 @@ func (s *SubProcess) Start() error {
 		return err
 	}
 	s.pty = p
-
 	s.oldState, err = terminal.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (s *SubProcess) Close() error {
