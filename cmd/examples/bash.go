@@ -13,7 +13,6 @@ func main() {
 	defer child.Close()
 
 	fmt.Println("starting interact...")
-	if err := child.Interact(); err != nil {
-		fmt.Println("failde interacting")
-	}
+	child.Interact()
+	fmt.Println("done interacting")
 }

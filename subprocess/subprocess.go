@@ -3,7 +3,6 @@ package subprocess
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -40,15 +39,15 @@ func NewSubProcess(command string, args ...string) (*SubProcess, error) {
 	}, nil
 }
 
-func (s *SubProcess) listenForShutdown(wg *sync.WaitGroup, signals chan os.Signal, errs chan error, cancel context.CancelFunc) {
-	defer wg.Done()
+func (s *SubProcess) listenForShutdown(signals chan os.Signal, errs chan error, stop chan struct{}) {
 
+LOOP:
 	for {
 		select {
 		case e := <-errs:
 			log.Printf("failed with error: %v", e)
-			cancel()
-			return
+			stop <- struct{}{}
+			break LOOP
 
 		case sig := <-signals:
 			switch sig {
@@ -63,82 +62,69 @@ func (s *SubProcess) listenForShutdown(wg *sync.WaitGroup, signals chan os.Signa
 			case syscall.SIGTSTP:
 				fallthrough
 			case syscall.SIGINT:
-				cancel()
-				return
+				stop <- struct{}{}
+				break LOOP
 			}
 		}
 	}
+
+	close(stop)
 }
 
-func waitForCommandCompletion(ctx context.Context, wg *sync.WaitGroup, cmd *exec.Cmd, errs chan error) {
-	defer wg.Done()
-
-	done := make(chan error)
-
+func waitForCommandCompletion(ctx context.Context, cmd *exec.Cmd, errs chan error, stop chan struct{}) {
 	go func() {
 		err := cmd.Wait()
 		if err != nil {
 			errs <- err
 		}
-		close(done)
+		stop <- struct{}{}
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-done:
-			return
 		}
 	}
 }
 
-func copyFrom(ctx context.Context, wg *sync.WaitGroup, dst io.Writer, src io.Reader, errs chan error) {
-	defer wg.Done()
-
+func copyFrom(ctx context.Context, dst io.Writer, src io.Reader, errs chan error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			go func() {
-				_, err := io.Copy(dst, src)
-				if err != nil {
-					log.Printf("unable to copy pty to stdout: %v", err)
-					errs <- err
-				}
-			}()
+			_, err := io.Copy(dst, src)
+
+			if err != nil {
+				log.Printf("unable to copy pty to stdout: %v", err)
+				errs <- err
+			}
 		}
 	}
 }
 
-func (s *SubProcess) Interact() error {
+func (s *SubProcess) Interact() {
 	errs := make(chan error)
+	stop := make(chan struct{}, 1)
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGINT, syscall.SIGWINCH, syscall.SIGTSTP)
 
-	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(s.ctx)
 
-	wg.Add(1)
-	go s.listenForShutdown(&wg, signals, errs, cancel)
+	go s.listenForShutdown(signals, errs, stop)
+	go waitForCommandCompletion(ctx, s.command, errs, stop)
+	go copyFrom(ctx, os.Stdout, s.pty, errs)
+	go copyFrom(ctx, s.pty, os.Stdin, errs)
 
-	wg.Add(1)
-	go waitForCommandCompletion(ctx, &wg, s.command, errs)
+	<-stop
+	cancel()
+	_ = s.pty.Close()
+}
 
-	wg.Add(1)
-	go copyFrom(ctx, &wg, os.Stdout, s.pty, errs)
-
-	wg.Add(1)
-	go copyFrom(ctx, &wg, s.pty, os.Stdin, errs)
-
-	wg.Wait()
-	if len(s.log.log.String()) > 0 {
-		fmt.Println("\nlog: ", s.log.log.String())
-	}
-
-	return nil
+func (s *SubProcess) LogOutput() string {
+	return s.log.String()
 }
 
 func (s *SubProcess) Start() error {
@@ -152,7 +138,10 @@ func (s *SubProcess) Start() error {
 }
 
 func (s *SubProcess) Close() error {
-	return s.command.Process.Kill()
+	if s.command != nil && s.command.Process != nil {
+		return s.command.Process.Kill()
+	}
+	return nil
 }
 
 func (s *SubProcess) Send(value string) error {
@@ -180,6 +169,52 @@ func (s *SubProcess) ExpectExpressions(expressions []*regexp.Regexp) (int, error
 	return s.ExpectExpressionsWithTimeout(expressions, DefaultTimeout)
 }
 
+func (s *SubProcess) ExpectExpressionsWithTimeout(expressions []*regexp.Regexp, timeout time.Duration) (int, error) {
+	errs := make(chan error, 1)
+	ctx, _ := context.WithDeadline(context.Background(), time.Now().Add(timeout))
+	ctx, cancelFunc := context.WithCancel(ctx)
+
+	var output bytes.Buffer
+	var rwLock sync.RWMutex
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go s.readOutput(ctx, &wg, &output, &rwLock, errs)
+
+	var index = -1
+	var e error
+
+OUTER:
+	for {
+		select {
+		case <-ctx.Done():
+			e = ErrTimeout
+
+		case err := <-errs:
+			s.log.Printf("error reading from pty: %v", err)
+			e = errors.Wrap(err, "error reading from pty")
+			break OUTER
+
+		case <-time.After(50 * time.Microsecond): // TODO: adjust this
+			rwLock.RLock()
+			b := output.Bytes()
+			rwLock.RUnlock()
+
+			for i, r := range expressions {
+				if r.Find(b) != nil {
+					index = i
+					break OUTER
+				}
+			}
+		}
+	}
+
+	cancelFunc()
+	wg.Wait()
+	return index, e
+}
+
 func (s *SubProcess) readOutput(ctx context.Context, wg *sync.WaitGroup, buf io.Writer, lock *sync.RWMutex, errs chan error) {
 	defer wg.Done()
 
@@ -202,54 +237,9 @@ func (s *SubProcess) readOutput(ctx context.Context, wg *sync.WaitGroup, buf io.
 			if n > 0 {
 				lock.Lock()
 				_, _ = buf.Write(temp.Bytes())
-				fmt.Println("read: ", string(temp.Bytes()))
 				lock.Unlock()
 			}
 		}
 	}
 }
 
-func (s *SubProcess) ExpectExpressionsWithTimeout(expressions []*regexp.Regexp, timeout time.Duration) (int, error) {
-	errs := make(chan error, 1)
-	ctx, _ := context.WithDeadline(context.Background(), time.Now().Add(timeout))
-
-	var output bytes.Buffer
-	var rwLock sync.RWMutex
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go s.readOutput(ctx, &wg, &output, &rwLock, errs)
-
-	var index = -1
-	var e error
-
-OUTER:
-	for {
-		select {
-		case <-ctx.Done():
-			e = ErrTimeout
-			break OUTER
-
-		case err := <-errs:
-			s.log.Printf("error reading from pty: %v", err)
-			e = errors.Wrap(err, "error reading from pty")
-			break OUTER
-
-		case <-time.After(50 * time.Microsecond): // TODO: adjust this
-			rwLock.RLock()
-			b := output.Bytes()
-			rwLock.RUnlock()
-
-			for i, r := range expressions {
-				if r.Find(b) != nil {
-					index = i
-					break OUTER
-				}
-			}
-		}
-	}
-
-	//wg.Wait()
-	return index, e
-}
