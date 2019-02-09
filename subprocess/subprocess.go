@@ -89,7 +89,6 @@ func (s *SubProcess) Interact() {
 
 	<-stop
 	cancel()
-	close(stop)
 	_ = s.pty.Close()
 }
 
