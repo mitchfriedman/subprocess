@@ -226,12 +226,10 @@ func (s *SubProcess) readOutput(ctx context.Context, wg *sync.WaitGroup, buf io.
 			var temp bytes.Buffer
 
 			n, err := io.Copy(&temp, s.pty)
-			if err != nil {
-				if err != io.EOF {
-					errs <- err
-					close(errs)
-					return
-				}
+			if err != nil && err != io.EOF{
+				errs <- err
+				close(errs)
+				return
 			}
 
 			if n > 0 {
