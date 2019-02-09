@@ -43,13 +43,13 @@ func NewSubProcess(command string, args ...string) (*SubProcess, error) {
 
 func (s *SubProcess) listenForShutdown(signals chan os.Signal, errs chan error, stop chan struct{}) {
 
-LOOP:
 	for {
 		select {
 		case e := <-errs:
 			log.Printf("failed with error: %v", e)
 			stop <- struct{}{}
-			break LOOP
+			close(stop)
+			return
 
 		case sig := <-signals:
 			switch sig {
@@ -65,12 +65,11 @@ LOOP:
 				fallthrough
 			case syscall.SIGINT:
 				stop <- struct{}{}
-				break LOOP
+				close(stop)
+				return
 			}
 		}
 	}
-
-	close(stop)
 }
 
 func waitForCommandCompletion(ctx context.Context, cmd *exec.Cmd, errs chan error, stop chan struct{}) {
