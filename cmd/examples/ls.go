@@ -1,9 +1,9 @@
 package main
 
 import (
-	"expect/subprocess"
 	"fmt"
 	"regexp"
+	"subprocess/subprocess"
 	"time"
 )
 

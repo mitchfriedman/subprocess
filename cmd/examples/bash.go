@@ -1,8 +1,8 @@
 package main
 
 import (
-	"expect/subprocess"
 	"fmt"
+	"subprocess/subprocess"
 )
 
 func main() {
