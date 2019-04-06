@@ -1,8 +1,9 @@
-module subprocess
+module github.com/mitchfriedman/subprocess
+
+go 1.12
 
 require (
-	github.com/kr/pty v1.1.3
+	github.com/kr/pty v1.1.4
 	github.com/pkg/errors v0.8.1
-	golang.org/x/crypto v0.0.0-20190131182504-b8fe1690c613
-	golang.org/x/sys v0.0.0-20190201152629-afcc84fd7533 // indirect
+	golang.org/x/crypto v0.0.0-20190404164418-38d8ce5564a5
 )
