@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"regexp"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/kr/pty"
@@ -41,55 +38,11 @@ func NewSubProcess(command string, args ...string) (*SubProcess, error) {
 	}, nil
 }
 
-func (s *SubProcess) listenForShutdown(signals chan os.Signal, errs chan error, stop chan struct{}) {
-	for {
-		select {
-		case e := <-errs:
-			log.Printf("failed with error: %v", e)
-			stop <- struct{}{}
-			return
-
-		case sig := <-signals:
-			switch sig {
-			case syscall.SIGWINCH:
-				if err := pty.InheritSize(os.Stdin, s.pty); err != nil {
-					// probably not worth shutting down the process over this error, so let's log and move on
-					log.Printf("error resizing pty: %s", err)
-				}
-
-			default:
-				stop <- struct{}{}
-				return
-			}
-		}
-	}
-}
-
-func waitForCommandCompletion(cmd *exec.Cmd, errs chan error, stop chan struct{}) {
-	err := cmd.Wait()
-	if err != nil {
-		errs <- err
-	}
-	stop <- struct{}{}
-}
-
 func (s *SubProcess) Interact() {
-	errs := make(chan error)
-	stop := make(chan struct{}, 1)
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGINT, syscall.SIGWINCH, syscall.SIGTSTP)
-
-	_, cancel := context.WithCancel(s.ctx)
-
-	go s.listenForShutdown(signals, errs, stop)
-	go waitForCommandCompletion(s.command, errs, stop)
+	_ = pty.InheritSize(os.Stdin, s.pty)
+	defer s.command.Wait()
 	go io.Copy(os.Stdout, s.pty)
 	go io.Copy(s.pty, os.Stdin)
-
-	<-stop
-	cancel()
-	_ = s.pty.Close()
 }
 
 func (s *SubProcess) LogOutput() string {
