@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"subprocess/subprocess"
+	"github.com/mitchfriedman/subprocess/subprocess"
 )
 
 func main() {

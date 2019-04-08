@@ -20,7 +20,7 @@ import (
 
 var ErrTimeout = errors.New("timeout expecting results")
 
-const DefaultTimeout = 30 * time.Second
+const defaultTimeout = 30 * time.Second
 
 type SubProcess struct {
 	command  *exec.Cmd
@@ -134,11 +134,11 @@ func (s *SubProcess) ExpectWithTimeout(expression *regexp.Regexp, duration time.
 }
 
 func (s *SubProcess) Expect(expression *regexp.Regexp) (bool, error) {
-	return s.ExpectWithTimeout(expression, DefaultTimeout)
+	return s.ExpectWithTimeout(expression, defaultTimeout)
 }
 
 func (s *SubProcess) ExpectExpressions(expressions []*regexp.Regexp) (int, error) {
-	return s.ExpectExpressionsWithTimeout(expressions, DefaultTimeout)
+	return s.ExpectExpressionsWithTimeout(expressions, defaultTimeout)
 }
 
 func (s *SubProcess) ExpectExpressionsWithTimeout(expressions []*regexp.Regexp, timeout time.Duration) (int, error) {
@@ -146,7 +146,7 @@ func (s *SubProcess) ExpectExpressionsWithTimeout(expressions []*regexp.Regexp, 
 	ctx, _ := context.WithDeadline(context.Background(), time.Now().Add(timeout))
 	ctx, cancelFunc := context.WithCancel(ctx)
 
-	var output bytes.Buffer
+	output := bytes.Buffer{}
 	var rwLock sync.RWMutex
 
 	var wg sync.WaitGroup
@@ -194,19 +194,23 @@ func (s *SubProcess) readOutput(ctx context.Context, wg *sync.WaitGroup, buf io.
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			var temp bytes.Buffer
+		case <-time.After(50 * time.Microsecond):
+			temp := make([]byte, 1024)
 
-			n, err := io.Copy(&temp, s.pty)
+			n, err := s.pty.Read(temp)
 			if err != nil && err != io.EOF {
 				errs <- err
 				close(errs)
 				return
 			}
 
+			if err == io.EOF {
+				return
+			}
+
 			if n > 0 {
 				lock.Lock()
-				_, _ = buf.Write(temp.Bytes())
+				_, _ = buf.Write(temp)
 				lock.Unlock()
 			}
 		}

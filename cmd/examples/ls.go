@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/mitchfriedman/subprocess/subprocess"
 	"regexp"
-	"subprocess/subprocess"
 	"time"
 )
 
@@ -14,7 +14,7 @@ func main() {
 	child.Start()
 
 	expressions := []*regexp.Regexp{
-		regexp.MustCompile(".mod"),
+		regexp.MustCompile("mod"),
 	}
 
 	index, err := child.ExpectExpressionsWithTimeout(expressions, 5*time.Second)
